@@ -1,0 +1,10 @@
+* Test oltp on docker mariadb
+  A webservice that connects to a mysql database and performs an oltp benchmark
+    # Python docker instance
+    # Connect instance to maria db instance
+    * From python instance connect sysbench to mariadb
+    * Python script that connects sysbench with mariadb.
+        https://github.com/tsuna/sysbench-tools
+        http://tsunanet.net/~tsuna/benchmarks/7K3000-RE4-ConstellationES/sysbench.html
+    * Store sysbench info in database or file
+    * View info as a graph in html.
