@@ -10,6 +10,6 @@ docker run --name syco-mariadb -e MYSQL_ROOT_PASSWORD=my-secret-pw -d mariadb:la
 # docker run -it --link syco-mariadb:mysql --rm mariadb sh -c 'exec mysql -h"$MYSQL_PORT_3306_TCP_ADDR" -P"$MYSQL_PORT_3306_TCP_PORT" -uroot -p"$MYSQL_ENV_MYSQL_ROOT_PASSWORD"'
 
 # Bash access
-docker exec -it some-mariadb bash
+# docker exec -it syco-mariadb bash
 
 
