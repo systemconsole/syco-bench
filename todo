@@ -4,10 +4,11 @@
     # Connect instance to maria db instance
     # From python instance connect sysbench to mariadb
     * Python script that connects sysbench with mariadb.
-        * Execute sysbench against mariadb
-        * Convert sysbench result to dict/json
+        # Execute sysbench against mariadb
+        # Convert sysbench result to dict/json
         * Store result in sqlite
         * Loop sysbench
+        * Show result in html
         https://github.com/tsuna/sysbench-tools
         http://tsunanet.net/~tsuna/benchmarks/7K3000-RE4-ConstellationES/sysbench.html
     * Store sysbench info in database or file

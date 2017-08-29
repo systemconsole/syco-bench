@@ -4,6 +4,9 @@ import MySQLdb
 import subprocess
 import sqlite3
 
+import yaml
+import json
+
 def mysql_prepare():
     db=MySQLdb.connect(host="syco-mariadb", passwd="my-secret-pw")
     c=db.cursor()
@@ -63,16 +66,33 @@ def run_rw():
     sysbench(cmd)
 
 
+def yamlstr2dict(str, starting):
+    """Return dict with data parsed from yaml string."""
+    # Remove everything in string before SQL statistics.
+    # Only keeping the yaml data
+    pos = str.find(starting)
+    f = str[pos:]
+    return yaml.load(f)
+
+
+def sysbench2dict(log):
+    d = yamlstr2dict(log.decode("utf-8"), "SQL statistics:")
+    print(json.dumps(d, sort_keys=True, indent=4))
+
+
 def sysbench(cmd):
     TEST_DIR="/usr/share/sysbench/tests/include/oltp_legacy/"
     THREAD=1
     cmd = cmd.format(TEST_DIR=TEST_DIR, THREAD=THREAD)
     print(cmd)
     result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
+    print("---- return code")
     print(result.returncode)
+    print("---- stdout")
     print(result.stdout)
+    print("---- stderr")
     print(result.stderr)
-
+    print("----")
 
 
 def db_prepare():
@@ -103,6 +123,11 @@ def db_select():
 
 #prepare()
 #run_rw()
-db_prepare()
-db_select()
+
+
+sysbench2dict(
+    b'sysbench 1.0.8 (using bundled LuaJIT 2.1.0-beta2)\n\nRunning the test with following options:\nNumber of threads: 1\nReport intermediate results every 1 second(s)\nInitializing random number generator from current time\n\n\nInitializing worker threads...\n\nThreads started!\n\n[ 1s ] thds: 1 tps: 31.88 qps: 656.60 (r/w/o: 460.32/131.52/64.76) lat (ms,95%): 37.56 err/s: 0.00 reconn/s: 0.00\n[ 2s ] thds: 1 tps: 36.04 qps: 703.85 (r/w/o: 491.59/140.17/72.09) lat (ms,95%): 35.59 err/s: 0.00 reconn/s: 0.00\nSQL statistics:\n    queries performed:\n        read:                            966\n        write:                           276\n        other:                           138\n        total:                           1380\n    transactions:                        69     (33.99 per sec.)\n    queries:                             1380   (679.75 per sec.)\n    ignored errors:                      0      (0.00 per sec.)\n    reconnects:                          0      (0.00 per sec.)\n\nGeneral statistics:\n    total time:                          2.0286s\n    total number of events:              69\n\nLatency (ms):\n         min:                                 21.14\n         avg:                                 29.38\n         max:                                 66.43\n         95th percentile:                     38.25\n         sum:                               2027.25\n\nThreads fairness:\n    events (avg/stddev):           69.0000/0.00\n    execution time (avg/stddev):   2.0272/0.00\n\n'
+)
+#db_prepare()
+#db_select()
 print("END")
