@@ -4,96 +4,110 @@ import MySQLdb
 import subprocess
 import sqlite3
 import json
+import sys
 from datetime import datetime
-
 
 from utils import yamlstr2dict
 
 # Constants / Settings
 SQLLITE_DB_FILE = "syco-bench.db"
 
+MYSQL_HOST="syco-mariadb"
+MYSQL_USER="root"
+MYSQL_PASSWORD="my-secret-pw"
+MYSQL_DB="sbtest"
+
+# Print information to stdout
+VERBOSE=True
+
+# Folder where sysbench tests are stored.
+TEST_DIR="/usr/share/sysbench/tests/include/oltp_legacy"
+
+def printv(txt):
+    """Print when verbose output is configured."""
+    if VERBOSE:
+        print(txt)
+
 def mysql_prepare():
-    db=MySQLdb.connect(host="syco-mariadb", passwd="my-secret-pw")
+    """Create database for sysbench tests."""
+    printv("* Mysql prepare.")
+    db=MySQLdb.connect(host=MYSQL_HOST, user=MYSQL_USER, passwd=MYSQL_PASSWORD)
     c=db.cursor()
-    c.execute("""create or replace database sbtest""")
-
-    db=MySQLdb.connect(host="syco-mariadb", passwd="my-secret-pw", db="sbtest")
-    c=db.cursor()
-
-    c.execute("""
-    create table if not exists test (
-      a bigint auto_increment primary key,
-      name varchar(128) charset utf8,
-      key name (name(32))
-    ) engine=InnoDB default charset latin1;
-    """)
-
-    c.execute("""insert into test values(NULL, "cow")""")
-
-    x = c.execute("""SELECT a, name FROM test""")
-    print(x)
-    print(c.fetchone())
-    print("Yes")
+    c.execute("""create or replace database %s""" % MYSQL_DB)
 
 
-def prepare():
+def sysbench(cmd, threads):
+    cmd = cmd.format(
+        MYSQL_HOST=MYSQL_HOST,
+        MYSQL_USER=MYSQL_USER,
+        MYSQL_PASSWORD=MYSQL_PASSWORD,
+        TEST_DIR=TEST_DIR,
+        THREADS=threads
+    )
+    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
+    if result.returncode:
+        print("---- cmd")
+        print(cmd.strip())
+        print("---- return code")
+        print(result.returncode)
+        print("---- stdout")
+        print(result.stdout)
+        print("---- stderr")
+        print(result.stderr)
+        print("----")
+        exit(1)
+    return result.stdout
+
+
+def sysbench_oltp_prepare(threads):
+    printv("* sysbench mysql oltp prepare threads %s." % threads)
     cmd = """
     sysbench \
       --db-driver=mysql \
-      --mysql-host=syco-mariadb \
-      --mysql-password=my-secret-pw \
+      --mysql-host={MYSQL_HOST} \
+      --mysql-user={MYSQL_USER} \
+      --mysql-password={MYSQL_PASSWORD} \
+      --mysql-table-engine=InnoDB \
       --oltp-table-size=4000 \
       --oltp-tables-count=2 \
-      --mysql-table-engine=InnoDB \
-      --mysql-user=root \
       {TEST_DIR}/oltp.lua \
       prepare
     """
-    sysbench(cmd)
+    return cmd, sysbench(cmd, threads)
 
 
-def run_rw():
+def sysbench_oltp_rw(threads):
+    printv("* sysbench mysql oltp run threads %s." % threads)
     cmd = """
     sysbench \
         --db-driver=mysql \
-        --mysql-host=syco-mariadb \
-        --mysql-user=root \
-        --mysql-password=my-secret-pw \
+        --mysql-host={MYSQL_HOST} \
+        --mysql-user={MYSQL_USER} \
+        --mysql-password={MYSQL_PASSWORD} \
+        --mysql-table-engine=InnoDB \
+        --oltp-table-size=4000 \
+        --oltp-tables-count=2 \
         --max-requests=0 \
         --time=2 \
-        --report-interval=1 \
-        --oltp-tables-count=2 \
-        --oltp-table-size=4000 \
-        --threads={THREAD} \
+        --report-interval=0 \
+        --threads={THREADS} \
         {TEST_DIR}/oltp.lua \
         run
     """
-    sysbench(cmd)
-
-
-def sysbench(cmd):
-    TEST_DIR="/usr/share/sysbench/tests/include/oltp_legacy/"
-    THREAD=1
-    cmd = cmd.format(TEST_DIR=TEST_DIR, THREAD=THREAD)
-    print(cmd)
-    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
-    print("---- return code")
-    print(result.returncode)
-    print("---- stdout")
-    print(result.stdout)
-    print("---- stderr")
-    print(result.stderr)
-    print("----")
+    return cmd, sysbench(cmd, threads)
 
 
 def sysbench2dict(str):
     """Convert result from sysbench to dict."""
     return yamlstr2dict(str.decode("utf-8"), "SQL statistics:")
 
+
 conn = c = None
 def sqlite_connect():
+    """Create or reuse an sqlite connection and cursor."""
     global conn, c
     if not conn or not c:
+        printv("* SQLite connect to %s." % SQLLITE_DB_FILE)
         conn = sqlite3.connect(SQLLITE_DB_FILE)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
@@ -101,9 +115,11 @@ def sqlite_connect():
 
 
 def sqlite_prepare():
+    """Create the database if it doesn't exist."""
     conn, c = sqlite_connect()
     c.execute("SELECT count(*) FROM sqlite_master WHERE type='table'")
     if c.fetchone()[0] == 0:
+        printv("* SQLite create table sysbench_oltp.")
         # sysbench_oltp
         c.execute("""
         CREATE TABLE sysbench_oltp
@@ -118,21 +134,13 @@ def sqlite_prepare():
         conn.commit()
 
 
-def sqlite_select():
-    conn, c = sqlite_connect()
-    t = (1,)
-    for row in c.execute("SELECT * FROM sysbench_oltp WHERE 1=?", t):
-        print(row['id'])
-        print(row['command'])
-        print(row['result'])
-        print(row['comment'])
-        print(row['created'])
-
-
 def sqlite_store_sysbench_oltp(command, result, comment):
-    """Store sysbench result to sqllite database."""
-    created = str(datetime.now())
+    """Store sysbench json result in sqllite database."""
+    printv("* SQLite store to sysbench_oltp.")
+    command = ' '.join(command.strip().split())
     j = json.dumps(result, sort_keys=True, indent=4)
+    created = str(datetime.now())
+
     conn, c = sqlite_connect()
     c.execute("""
     INSERT INTO sysbench_oltp
@@ -143,15 +151,30 @@ def sqlite_store_sysbench_oltp(command, result, comment):
     conn.commit()
 
 
-#prepare()
-#run_rw()
+def sqlite_select():
+    """Return all sysbench_oltp results."""
+    conn, c = sqlite_connect()
+    t = (1,)
+    for row in c.execute("SELECT * FROM sysbench_oltp WHERE 1=?", t):
+        print(row['id'])
+        print(row['command'])
+        print(row['result'])
+        print(row['comment'])
+        print(row['created'])
 
 
-d = sysbench2dict(
-    b'sysbench 1.0.8 (using bundled LuaJIT 2.1.0-beta2)\n\nRunning the test with following options:\nNumber of threads: 1\nReport intermediate results every 1 second(s)\nInitializing random number generator from current time\n\n\nInitializing worker threads...\n\nThreads started!\n\n[ 1s ] thds: 1 tps: 31.88 qps: 656.60 (r/w/o: 460.32/131.52/64.76) lat (ms,95%): 37.56 err/s: 0.00 reconn/s: 0.00\n[ 2s ] thds: 1 tps: 36.04 qps: 703.85 (r/w/o: 491.59/140.17/72.09) lat (ms,95%): 35.59 err/s: 0.00 reconn/s: 0.00\nSQL statistics:\n    queries performed:\n        read:                            966\n        write:                           276\n        other:                           138\n        total:                           1380\n    transactions:                        69     (33.99 per sec.)\n    queries:                             1380   (679.75 per sec.)\n    ignored errors:                      0      (0.00 per sec.)\n    reconnects:                          0      (0.00 per sec.)\n\nGeneral statistics:\n    total time:                          2.0286s\n    total number of events:              69\n\nLatency (ms):\n         min:                                 21.14\n         avg:                                 29.38\n         max:                                 66.43\n         95th percentile:                     38.25\n         sum:                               2027.25\n\nThreads fairness:\n    events (avg/stddev):           69.0000/0.00\n    execution time (avg/stddev):   2.0272/0.00\n\n'
-)
-cmd ="ls -all"
-sqlite_prepare()
-sqlite_store_sysbench_oltp(cmd, d, "This is the comment")
-sqlite_select()
-print("END")
+def main():
+    # Prepare environment.
+    sqlite_prepare()
+    mysql_prepare()
+    sysbench_oltp_prepare(1)
+
+    # Run tests against mysql
+    cmd, result = sysbench_oltp_rw(1)
+    d = sysbench2dict(result)
+    sqlite_store_sysbench_oltp(cmd, d, "This is the comment")
+
+    #sqlite_select()
+
+if __name__ == "__main__":
+  sys.exit(main())
