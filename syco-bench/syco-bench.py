@@ -3,9 +3,14 @@
 import MySQLdb
 import subprocess
 import sqlite3
-
-import yaml
 import json
+from datetime import datetime
+
+
+from utils import yamlstr2dict
+
+# Constants / Settings
+SQLLITE_DB_FILE = "syco-bench.db"
 
 def mysql_prepare():
     db=MySQLdb.connect(host="syco-mariadb", passwd="my-secret-pw")
@@ -66,20 +71,6 @@ def run_rw():
     sysbench(cmd)
 
 
-def yamlstr2dict(str, starting):
-    """Return dict with data parsed from yaml string."""
-    # Remove everything in string before SQL statistics.
-    # Only keeping the yaml data
-    pos = str.find(starting)
-    f = str[pos:]
-    return yaml.load(f)
-
-
-def sysbench2dict(log):
-    d = yamlstr2dict(log.decode("utf-8"), "SQL statistics:")
-    print(json.dumps(d, sort_keys=True, indent=4))
-
-
 def sysbench(cmd):
     TEST_DIR="/usr/share/sysbench/tests/include/oltp_legacy/"
     THREAD=1
@@ -95,39 +86,72 @@ def sysbench(cmd):
     print("----")
 
 
-def db_prepare():
-    conn = sqlite3.connect("syco-bench.db")
-    c = conn.cursor()
+def sysbench2dict(str):
+    """Convert result from sysbench to dict."""
+    return yamlstr2dict(str.decode("utf-8"), "SQL statistics:")
+
+conn = c = None
+def sqlite_connect():
+    global conn, c
+    if not conn or not c:
+        conn = sqlite3.connect(SQLLITE_DB_FILE)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+    return conn, c
+
+
+def sqlite_prepare():
+    conn, c = sqlite_connect()
     c.execute("SELECT count(*) FROM sqlite_master WHERE type='table'")
     if c.fetchone()[0] == 0:
-        # Create table
-        c.execute("""CREATE TABLE stocks
-                     (date text, trans text, symbol text, qty real, price real)""")
-
-        # Insert a row of data
-        c.execute("INSERT INTO stocks VALUES ('2006-01-05','BUY','RHAT',100,35.14)")
-
-        # Save (commit) the changes
+        # sysbench_oltp
+        c.execute("""
+        CREATE TABLE sysbench_oltp
+        (
+          id INTEGER PRIMARY KEY ASC, 
+          command text, 
+          result text,
+          comment text,
+          created text 
+        )
+        """)
         conn.commit()
 
-        # We can also close the connection if we are done with it.
-        # Just be sure any changes have been committed or they will be lost.
-    conn.close()
 
-def db_select():
-    conn = sqlite3.connect("syco-bench.db")
-    c = conn.cursor()
-    t = ("RHAT",)
-    c.execute("SELECT * FROM stocks WHERE symbol=?", t)
-    print(c.fetchone())
+def sqlite_select():
+    conn, c = sqlite_connect()
+    t = (1,)
+    for row in c.execute("SELECT * FROM sysbench_oltp WHERE 1=?", t):
+        print(row['id'])
+        print(row['command'])
+        print(row['result'])
+        print(row['comment'])
+        print(row['created'])
+
+
+def sqlite_store_sysbench_oltp(command, result, comment):
+    """Store sysbench result to sqllite database."""
+    created = str(datetime.now())
+    j = json.dumps(result, sort_keys=True, indent=4)
+    conn, c = sqlite_connect()
+    c.execute("""
+    INSERT INTO sysbench_oltp
+      (command, result, comment, created) 
+    VALUES
+      (?, ?, ?, ?)
+    """, (command, j, comment, created))
+    conn.commit()
+
 
 #prepare()
 #run_rw()
 
 
-sysbench2dict(
+d = sysbench2dict(
     b'sysbench 1.0.8 (using bundled LuaJIT 2.1.0-beta2)\n\nRunning the test with following options:\nNumber of threads: 1\nReport intermediate results every 1 second(s)\nInitializing random number generator from current time\n\n\nInitializing worker threads...\n\nThreads started!\n\n[ 1s ] thds: 1 tps: 31.88 qps: 656.60 (r/w/o: 460.32/131.52/64.76) lat (ms,95%): 37.56 err/s: 0.00 reconn/s: 0.00\n[ 2s ] thds: 1 tps: 36.04 qps: 703.85 (r/w/o: 491.59/140.17/72.09) lat (ms,95%): 35.59 err/s: 0.00 reconn/s: 0.00\nSQL statistics:\n    queries performed:\n        read:                            966\n        write:                           276\n        other:                           138\n        total:                           1380\n    transactions:                        69     (33.99 per sec.)\n    queries:                             1380   (679.75 per sec.)\n    ignored errors:                      0      (0.00 per sec.)\n    reconnects:                          0      (0.00 per sec.)\n\nGeneral statistics:\n    total time:                          2.0286s\n    total number of events:              69\n\nLatency (ms):\n         min:                                 21.14\n         avg:                                 29.38\n         max:                                 66.43\n         95th percentile:                     38.25\n         sum:                               2027.25\n\nThreads fairness:\n    events (avg/stddev):           69.0000/0.00\n    execution time (avg/stddev):   2.0272/0.00\n\n'
 )
-#db_prepare()
-#db_select()
+cmd ="ls -all"
+sqlite_prepare()
+sqlite_store_sysbench_oltp(cmd, d, "This is the comment")
+sqlite_select()
 print("END")

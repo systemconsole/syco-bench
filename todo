@@ -6,7 +6,7 @@
     * Python script that connects sysbench with mariadb.
         # Execute sysbench against mariadb
         # Convert sysbench result to dict/json
-        * Store result in sqlite
+        # Store result in sqlite
         * Loop sysbench
         * Show result in html
         https://github.com/tsuna/sysbench-tools
