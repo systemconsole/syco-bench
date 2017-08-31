@@ -102,3 +102,4 @@ ENV/
 
 .idea
 syco-bench.db
+syco-bench.js

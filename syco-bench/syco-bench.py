@@ -1,10 +1,23 @@
 #!/usr/bin/env python
+"""
+Benchmark mysql database with sysbench and displays result in syco-bench.html.
+
+The script creates an SQLite database (syco-bench.db) with all data returned
+by sysbench. The data is than calculated into a json file (syco-bench.js)
+with graph readable data. That files is viewable through an html file
+(syco-bench.html).
+
+
+Threads in the code is equal to number of connections
+
+"""
 
 import MySQLdb
 import subprocess
 import sqlite3
 import simplejson as json
 import sys
+import argparse
 from datetime import datetime
 from decimal import *
 
@@ -49,6 +62,7 @@ METRICS = {
     "ntotal": "Queries total",
     "nwrite": "Queries write",
     "nqueries": "Queries/s",
+    "ierrors": "Ignored errors/s",
 
     "transactions": "Transactions/s",
 
@@ -61,6 +75,7 @@ def printv(txt):
     if VERBOSE:
         print(txt)
 
+
 def mysql_prepare():
     """Create database for sysbench tests."""
     printv("* Mysql prepare.")
@@ -70,6 +85,7 @@ def mysql_prepare():
 
 
 def sysbench(cmd, threads):
+    """Execute linux cmd sysbench"""
     cmd = cmd.format(
         MYSQL_HOST=MYSQL_HOST,
         MYSQL_USER=MYSQL_USER,
@@ -77,22 +93,29 @@ def sysbench(cmd, threads):
         TEST_DIR=TEST_DIR,
         THREADS=threads
     )
+    print(cmd)
+
     result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
     if result.returncode:
-        printv("---- cmd")
-        printv(cmd.strip())
-        printv("---- return code")
-        printv(result.returncode)
-        printv("---- stdout")
-        printv(result.stdout)
-        printv("---- stderr")
-        printv(result.stderr)
-        printv("----")
-        exit(1)
+        printv("error")
+        if "FATAL: error 1040: Too many connections" in str(result.stdout):
+            raise MySQLdb.OperationalError(1040, "Too many connections")
+        else:
+            printv("---- cmd")
+            printv(cmd.strip())
+            printv("---- return code")
+            printv(result.returncode)
+            printv("---- stdout")
+            printv(result.stdout)
+            printv("---- stderr")
+            printv(result.stderr)
+            printv("----")
+            exit(1)
     return result.stdout
 
 
 def sysbench_oltp_prepare():
+    """Prepare the sysbench database"""
     printv("* sysbench mysql oltp prepare")
     cmd = """
     sysbench \
@@ -101,8 +124,8 @@ def sysbench_oltp_prepare():
       --mysql-user={MYSQL_USER} \
       --mysql-password={MYSQL_PASSWORD} \
       --mysql-table-engine=InnoDB \
-      --oltp-table-size=4000 \
-      --oltp-tables-count=2 \
+      --oltp-table-size=40000 \
+      --oltp-tables-count=50 \
       {TEST_DIR}/oltp.lua \
       prepare
     """
@@ -110,6 +133,7 @@ def sysbench_oltp_prepare():
 
 
 def sysbench_oltp_rw(threads):
+    """Run oltp read/write sysbench test."""
     printv("* sysbench mysql oltp run threads %s." % threads)
     cmd = """
     sysbench \
@@ -118,10 +142,11 @@ def sysbench_oltp_rw(threads):
         --mysql-user={MYSQL_USER} \
         --mysql-password={MYSQL_PASSWORD} \
         --mysql-table-engine=InnoDB \
-        --oltp-table-size=4000 \
-        --oltp-tables-count=2 \
+        --oltp-table-size=40000 \
+        --oltp-tables-count=50 \
         --max-requests=0 \
-        --time=2 \
+        --time=30 \
+        --warmup-time=2
         --report-interval=0 \
         --threads={THREADS} \
         {TEST_DIR}/oltp.lua \
@@ -237,6 +262,11 @@ def build_graf_data():
             per_sec_cut(d["SQL statistics"]["queries"])
         )
 
+        # Queries/s
+        data["ierrors"].setdefault(row['threads'], []).append(
+            per_sec_cut(d["SQL statistics"]["ignored errors"])
+        )
+
         # Queries other
         data["nother"].setdefault(row['threads'], []).append(
             d["SQL statistics"]["queries performed"]["other"]
@@ -278,6 +308,7 @@ def per_sec_cut(s):
     """
     return Decimal(s[s.find("(") + 1:s.find("per sec")].strip())
 
+
 def calculate_averages(config2results):
     """Calculate the averages from results."""
     printv("* Calculate averages")
@@ -292,7 +323,7 @@ def calculate_averages(config2results):
 def create_result_file(results):
     """Create the result.js file used by syco-bench.html containing graf data"""
     printv("* Create result.js")
-    with open("results.js", "w") as f:
+    with open("syco-bench.js", "w") as f:
         f.write("TESTS = ");
         json.dump(TESTS, f, indent=2)
         f.write(";\nMETRICS = ");
@@ -302,21 +333,66 @@ def create_result_file(results):
         f.write(";")
 
 
+def view_db_data():
+    """Print output from database."""
+    conn, c = sqlite_connect()
+
+    for row in c.execute("SELECT * FROM sysbench_oltp"):
+        print("Threads: %s" % row['threads'])
+        print(row['result'])
+        print("-"*80)
+
+
 def main():
-    # Prepare environment.
+    parser = argparse.ArgumentParser(
+        description='Benchmark mysql database with sysbench and '
+                    'displays result in syco-bench.html.'
+    )
+    parser.add_argument("--prepare", help="prepare the server benchmark",
+                        action = "store_true")
+    parser.add_argument("--bench", help="benchmark the server",
+                        action = "store_true")
+    parser.add_argument("--view", help="view SQLite contents",
+                        action="store_true")
+    args = parser.parse_args()
+    if args.prepare:
+        prepare()
+    elif args.bench:
+        benchmark()
+    elif args.view:
+        view()
+    else:
+        parser.print_help()
+
+
+def prepare():
+    """Prepare database before benchmark test"""
     sqlite_prepare()
     mysql_prepare()
     sysbench_oltp_prepare()
 
+
+def benchmark():
     # Run tests against mysql
-    for threads in [1, 2, 4, 8, 16, 32]:
-        cmd, result = sysbench_oltp_rw(threads)
-        d = sysbench2dict(result)
-        sqlite_store_sysbench_oltp(cmd, d, "mariadb", "rndrw", threads)
+    for threads in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]:
+        try:
+            cmd, result = sysbench_oltp_rw(threads)
+            d = sysbench2dict(result)
+            sqlite_store_sysbench_oltp(cmd, d, "mariadb", "rndrw", threads)
+        except MySQLdb.OperationalError as e:
+            if e.args[0] == 1040:
+                printv(e.args[1])
+                printv("* Further number of threads will probably also crach.")
+                break
 
     results = build_graf_data()
     create_result_file(results)
-    sys.exit(0)
+
+
+def view():
+    sqlite_prepare()
+    view_db_data()
+
 
 if __name__ == "__main__":
   sys.exit(main())

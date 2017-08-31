@@ -11,5 +11,5 @@
         https://github.com/tsuna/sysbench-tools
         http://tsunanet.net/~tsuna/benchmarks/7K3000-RE4-ConstellationES/sysbench.html
     # Loop sysbench
-    * Analyze the data. What does it mean? Whag I relly need?
+    # Analyze the data. What does it mean? What I really need?
     * Test against different settnings?
