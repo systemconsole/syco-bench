@@ -3,25 +3,58 @@
 import MySQLdb
 import subprocess
 import sqlite3
-import json
+import simplejson as json
 import sys
 from datetime import datetime
+from decimal import *
 
 from utils import yamlstr2dict
 
-# Constants / Settings
+# SQLite settings
 SQLLITE_DB_FILE = "syco-bench.db"
 
+
+# Mysql settings
 MYSQL_HOST="syco-mariadb"
 MYSQL_USER="root"
 MYSQL_PASSWORD="my-secret-pw"
 MYSQL_DB="sbtest"
 
+
 # Print information to stdout
 VERBOSE=True
 
+
 # Folder where sysbench tests are stored.
 TEST_DIR="/usr/share/sysbench/tests/include/oltp_legacy"
+
+
+# Tests for result.js
+TESTS = {
+    "rndrw": "Random reads/writes"
+}
+
+
+# Metrics for result.js
+METRICS = {
+    "total_num_events": "Total number of events",
+
+    "req_95p": "95th percentile latency",
+    "req_avg": "Avg. latency",
+    "req_max": "Max. latency",
+    "req_min": "Min. latency",
+
+    "nother": "Queries other",
+    "nread": "Queries read",
+    "ntotal": "Queries total",
+    "nwrite": "Queries write",
+    "nqueries": "Queries/s",
+
+    "transactions": "Transactions/s",
+
+    "tevents": "Thread events"
+}
+
 
 def printv(txt):
     """Print when verbose output is configured."""
@@ -46,21 +79,21 @@ def sysbench(cmd, threads):
     )
     result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
     if result.returncode:
-        print("---- cmd")
-        print(cmd.strip())
-        print("---- return code")
-        print(result.returncode)
-        print("---- stdout")
-        print(result.stdout)
-        print("---- stderr")
-        print(result.stderr)
-        print("----")
+        printv("---- cmd")
+        printv(cmd.strip())
+        printv("---- return code")
+        printv(result.returncode)
+        printv("---- stdout")
+        printv(result.stdout)
+        printv("---- stderr")
+        printv(result.stderr)
+        printv("----")
         exit(1)
     return result.stdout
 
 
-def sysbench_oltp_prepare(threads):
-    printv("* sysbench mysql oltp prepare threads %s." % threads)
+def sysbench_oltp_prepare():
+    printv("* sysbench mysql oltp prepare")
     cmd = """
     sysbench \
       --db-driver=mysql \
@@ -73,7 +106,7 @@ def sysbench_oltp_prepare(threads):
       {TEST_DIR}/oltp.lua \
       prepare
     """
-    return cmd, sysbench(cmd, threads)
+    return cmd, sysbench(cmd, None)
 
 
 def sysbench_oltp_rw(threads):
@@ -127,14 +160,16 @@ def sqlite_prepare():
           id INTEGER PRIMARY KEY ASC, 
           command text, 
           result text,
-          comment text,
+          config text,
+          test_mode text,
+          threads INTEGER ,
           created text 
         )
         """)
         conn.commit()
 
 
-def sqlite_store_sysbench_oltp(command, result, comment):
+def sqlite_store_sysbench_oltp(command, result, config, test_mode, threads):
     """Store sysbench json result in sqllite database."""
     printv("* SQLite store to sysbench_oltp.")
     command = ' '.join(command.strip().split())
@@ -144,37 +179,144 @@ def sqlite_store_sysbench_oltp(command, result, comment):
     conn, c = sqlite_connect()
     c.execute("""
     INSERT INTO sysbench_oltp
-      (command, result, comment, created) 
+      (command, result, config, test_mode, threads, created) 
     VALUES
-      (?, ?, ?, ?)
-    """, (command, j, comment, created))
+      (?, ?, ?, ?, ?, ?)
+    """, (command, j, config, test_mode, threads, created))
     conn.commit()
 
 
-def sqlite_select():
+def build_graf_data():
     """Return all sysbench_oltp results."""
+    printv("* Calculate graf data for result.js")
     conn, c = sqlite_connect()
-    t = (1,)
-    for row in c.execute("SELECT * FROM sysbench_oltp WHERE 1=?", t):
-        print(row['id'])
-        print(row['command'])
-        print(row['result'])
-        print(row['comment'])
-        print(row['created'])
+    c.execute("SELECT count(*) as num_of_rows FROM sysbench_oltp")
+    row = c.fetchone()
+    printv("* num_of_rows: %s" % row["num_of_rows"])
+
+    #
+    results = {}
+    for row in c.execute("SELECT * FROM sysbench_oltp"):
+        printv("* Calculate results for thread %s." % row['threads'])
+
+        # Set defaults
+        results.setdefault(row["config"], {}).setdefault(row["test_mode"], {})
+        if "results" in results[row["config"]][row["test_mode"]]:
+            data = results[row["config"]][row["test_mode"]]["results"]
+        else:
+            data = dict((metric, {}) for metric in METRICS)
+
+        # Retrive all metrics
+        d = json.loads(row['result'])
+        data["total_num_events"].setdefault(row['threads'], []).append(
+            d["General statistics"]["total number of events"]
+        )
+
+        # 95th percentile latency
+        data["req_95p"].setdefault(row['threads'], []).append(
+            d["Latency (ms)"]["95th percentile"]
+        )
+
+        # Avg. latency
+        data["req_avg"].setdefault(row['threads'], []).append(
+            d["Latency (ms)"]["avg"]
+        )
+
+        # Max. latency
+        data["req_max"].setdefault(row['threads'], []).append(
+            d["Latency (ms)"]["max"]
+        )
+
+        # "Min. latency
+        data["req_min"].setdefault(row['threads'], []).append(
+            d["Latency (ms)"]["min"]
+        )
+
+        # Queries/s
+        data["nqueries"].setdefault(row['threads'], []).append(
+            per_sec_cut(d["SQL statistics"]["queries"])
+        )
+
+        # Queries other
+        data["nother"].setdefault(row['threads'], []).append(
+            d["SQL statistics"]["queries performed"]["other"]
+        )
+
+        # Queries read
+        data["nread"].setdefault(row['threads'], []).append(
+            d["SQL statistics"]["queries performed"]["read"]
+        )
+
+        # Queries total
+        data["ntotal"].setdefault(row['threads'], []).append(
+            d["SQL statistics"]["queries performed"]["total"]
+        )
+
+        # Queries write
+        data["nwrite"].setdefault(row['threads'], []).append(
+            d["SQL statistics"]["queries performed"]["write"]
+        )
+
+        # Transactions/s",
+        data["transactions"].setdefault(row['threads'], []).append(
+            per_sec_cut(d["SQL statistics"]["transactions"])
+        )
+
+        # Thread events
+        #data["tevents"].setdefault(row['threads'], []).append(
+        #    d["Threads fairness"]["events (avg/stddev)"]
+        #)
+
+        results[row['config']][row['test_mode']]["results"] = data
+    calculate_averages(results)
+    return results
+
+
+def per_sec_cut(s):
+    """Return the per sec value from a string
+    "0      (0.090 per sec.)" will return "0.090"
+    """
+    return Decimal(s[s.find("(") + 1:s.find("per sec")].strip())
+
+def calculate_averages(config2results):
+    """Calculate the averages from results."""
+    printv("* Calculate averages")
+    for config, results in config2results.items():
+        for test_mode, data in results.items():
+            data["averages"] = dict(
+                (metric, [[num_threads, int(sum(vs) / len(vs))] for num_threads, vs in sorted(values.items())])
+                for metric, values in data["results"].items()
+            )
+
+
+def create_result_file(results):
+    """Create the result.js file used by syco-bench.html containing graf data"""
+    printv("* Create result.js")
+    with open("results.js", "w") as f:
+        f.write("TESTS = ");
+        json.dump(TESTS, f, indent=2)
+        f.write(";\nMETRICS = ");
+        json.dump(METRICS, f, indent=2)
+        f.write("\nresults = ");
+        json.dump(results, f, indent=2, use_decimal=True)
+        f.write(";")
 
 
 def main():
     # Prepare environment.
     sqlite_prepare()
     mysql_prepare()
-    sysbench_oltp_prepare(1)
+    sysbench_oltp_prepare()
 
     # Run tests against mysql
-    cmd, result = sysbench_oltp_rw(1)
-    d = sysbench2dict(result)
-    sqlite_store_sysbench_oltp(cmd, d, "This is the comment")
+    for threads in [1, 2, 4, 8, 16, 32]:
+        cmd, result = sysbench_oltp_rw(threads)
+        d = sysbench2dict(result)
+        sqlite_store_sysbench_oltp(cmd, d, "mariadb", "rndrw", threads)
 
-    #sqlite_select()
+    results = build_graf_data()
+    create_result_file(results)
+    sys.exit(0)
 
 if __name__ == "__main__":
   sys.exit(main())

@@ -231,6 +231,7 @@ def main(args):
       data["averages"] = dict((metric, [[num_threads, sum(vs) / len(vs)]
                                         for num_threads, vs in sorted(values.iteritems())])
                               for metric, values in data["results"].iteritems())
+
   with open("results.js", "w") as f:
     f.write("TESTS = ");
     json.dump(TESTS, f, indent=2)

@@ -7,7 +7,9 @@
     # Execute sysbench against mariadb
     # Convert sysbench result to dict/json
     # Store result in sqlite
-    * View info as a graph in html.
+    # View info as a graph in html.
         https://github.com/tsuna/sysbench-tools
         http://tsunanet.net/~tsuna/benchmarks/7K3000-RE4-ConstellationES/sysbench.html
-    * Loop sysbench
+    # Loop sysbench
+    * Analyze the data. What does it mean? Whag I relly need?
+    * Test against different settnings?
