@@ -101,5 +101,3 @@ ENV/
 .mypy_cache/
 
 .idea
-syco-bench.db
-syco-bench.js

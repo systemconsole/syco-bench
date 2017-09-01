@@ -28,8 +28,8 @@ SQLLITE_DB_FILE = "syco-bench.db"
 
 
 # Mysql settings
-MYSQL_HOST="syco-mariadb"
-MYSQL_USER="root"
+MYSQL_HOST="10.101.11.91"
+MYSQL_USER="sbtest"
 MYSQL_PASSWORD="my-secret-pw"
 MYSQL_DB="sbtest"
 
@@ -93,8 +93,6 @@ def sysbench(cmd, threads):
         TEST_DIR=TEST_DIR,
         THREADS=threads
     )
-    print(cmd)
-
     result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
     if result.returncode:
         printv("error")
@@ -110,7 +108,6 @@ def sysbench(cmd, threads):
             printv("---- stderr")
             printv(result.stderr)
             printv("----")
-            exit(1)
     return result.stdout
 
 
@@ -124,8 +121,8 @@ def sysbench_oltp_prepare():
       --mysql-user={MYSQL_USER} \
       --mysql-password={MYSQL_PASSWORD} \
       --mysql-table-engine=InnoDB \
-      --oltp-table-size=40000 \
-      --oltp-tables-count=50 \
+      --oltp-table-size=800000 \
+      --oltp-tables-count=40 \
       {TEST_DIR}/oltp.lua \
       prepare
     """
@@ -142,12 +139,12 @@ def sysbench_oltp_rw(threads):
         --mysql-user={MYSQL_USER} \
         --mysql-password={MYSQL_PASSWORD} \
         --mysql-table-engine=InnoDB \
-        --oltp-table-size=40000 \
-        --oltp-tables-count=50 \
+        --oltp-table-size=800000 \
+        --oltp-tables-count=40 \
         --max-requests=0 \
         --time=30 \
-        --warmup-time=2
-        --report-interval=0 \
+        --warmup-time=2 \
+        --report-interval=5 \
         --threads={THREADS} \
         {TEST_DIR}/oltp.lua \
         run
@@ -169,6 +166,7 @@ def sqlite_connect():
         conn = sqlite3.connect(SQLLITE_DB_FILE)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
+        sqlite_prepare()
     return conn, c
 
 
@@ -178,7 +176,7 @@ def sqlite_prepare():
     c.execute("SELECT count(*) FROM sqlite_master WHERE type='table'")
     if c.fetchone()[0] == 0:
         printv("* SQLite create table sysbench_oltp.")
-        # sysbench_oltp
+        # TABLE: sysbench_oltp
         c.execute("""
         CREATE TABLE sysbench_oltp
         (
@@ -211,6 +209,76 @@ def sqlite_store_sysbench_oltp(command, result, config, test_mode, threads):
     conn.commit()
 
 
+def copy_graf_data(row, data):
+    """Retrive all metrics"""
+    d = json.loads(row['result'])
+    data["total_num_events"].setdefault(row['threads'], []).append(
+        d["General statistics"]["total number of events"]
+    )
+
+    # 95th percentile latency
+    data["req_95p"].setdefault(row['threads'], []).append(
+        d["Latency (ms)"]["95th percentile"]
+    )
+
+    # Avg. latency
+    data["req_avg"].setdefault(row['threads'], []).append(
+        d["Latency (ms)"]["avg"]
+    )
+
+    # Max. latency
+    data["req_max"].setdefault(row['threads'], []).append(
+        d["Latency (ms)"]["max"]
+    )
+
+    # "Min. latency
+    data["req_min"].setdefault(row['threads'], []).append(
+        d["Latency (ms)"]["min"]
+    )
+
+    # Queries/s
+    data["nqueries"].setdefault(row['threads'], []).append(
+        per_sec_cut(d["SQL statistics"]["queries"])
+    )
+
+    # Queries/s
+    data["ierrors"].setdefault(row['threads'], []).append(
+        per_sec_cut(d["SQL statistics"]["ignored errors"])
+    )
+
+    # Queries other
+    data["nother"].setdefault(row['threads'], []).append(
+        d["SQL statistics"]["queries performed"]["other"]
+    )
+
+    # Queries read
+    data["nread"].setdefault(row['threads'], []).append(
+        d["SQL statistics"]["queries performed"]["read"]
+    )
+
+    # Queries total
+    data["ntotal"].setdefault(row['threads'], []).append(
+        d["SQL statistics"]["queries performed"]["total"]
+    )
+
+    # Queries write
+    data["nwrite"].setdefault(row['threads'], []).append(
+        d["SQL statistics"]["queries performed"]["write"]
+    )
+
+    # Transactions/s",
+    data["transactions"].setdefault(row['threads'], []).append(
+        per_sec_cut(d["SQL statistics"]["transactions"])
+    )
+
+    # Thread events
+    #data["tevents"].setdefault(row['threads'], []).append(
+    #    d["Threads fairness"]["events (avg/stddev)"]
+    #)
+
+    return data
+
+
 def build_graf_data():
     """Return all sysbench_oltp results."""
     printv("* Calculate graf data for result.js")
@@ -225,79 +293,20 @@ def build_graf_data():
         printv("* Calculate results for thread %s." % row['threads'])
 
         # Set defaults
-        results.setdefault(row["config"], {}).setdefault(row["test_mode"], {})
+        results.setdefault(row["config"], {}).setdefault(row["test_mode"],
+                                                         {})
         if "results" in results[row["config"]][row["test_mode"]]:
             data = results[row["config"]][row["test_mode"]]["results"]
         else:
             data = dict((metric, {}) for metric in METRICS)
 
-        # Retrive all metrics
-        d = json.loads(row['result'])
-        data["total_num_events"].setdefault(row['threads'], []).append(
-            d["General statistics"]["total number of events"]
-        )
-
-        # 95th percentile latency
-        data["req_95p"].setdefault(row['threads'], []).append(
-            d["Latency (ms)"]["95th percentile"]
-        )
-
-        # Avg. latency
-        data["req_avg"].setdefault(row['threads'], []).append(
-            d["Latency (ms)"]["avg"]
-        )
-
-        # Max. latency
-        data["req_max"].setdefault(row['threads'], []).append(
-            d["Latency (ms)"]["max"]
-        )
-
-        # "Min. latency
-        data["req_min"].setdefault(row['threads'], []).append(
-            d["Latency (ms)"]["min"]
-        )
-
-        # Queries/s
-        data["nqueries"].setdefault(row['threads'], []).append(
-            per_sec_cut(d["SQL statistics"]["queries"])
-        )
-
-        # Queries/s
-        data["ierrors"].setdefault(row['threads'], []).append(
-            per_sec_cut(d["SQL statistics"]["ignored errors"])
-        )
-
-        # Queries other
-        data["nother"].setdefault(row['threads'], []).append(
-            d["SQL statistics"]["queries performed"]["other"]
-        )
-
-        # Queries read
-        data["nread"].setdefault(row['threads'], []).append(
-            d["SQL statistics"]["queries performed"]["read"]
-        )
-
-        # Queries total
-        data["ntotal"].setdefault(row['threads'], []).append(
-            d["SQL statistics"]["queries performed"]["total"]
-        )
-
-        # Queries write
-        data["nwrite"].setdefault(row['threads'], []).append(
-            d["SQL statistics"]["queries performed"]["write"]
-        )
-
-        # Transactions/s",
-        data["transactions"].setdefault(row['threads'], []).append(
-            per_sec_cut(d["SQL statistics"]["transactions"])
-        )
-
-        # Thread events
-        #data["tevents"].setdefault(row['threads'], []).append(
-        #    d["Threads fairness"]["events (avg/stddev)"]
-        #)
+        try:
+            data = copy_graf_data(row, data)
+        except TypeError as e:
+            printv("Error:%s" % e)
 
         results[row['config']][row['test_mode']]["results"] = data
+
     calculate_averages(results)
     return results
 
@@ -352,6 +361,8 @@ def main():
                         action = "store_true")
     parser.add_argument("--bench", help="benchmark the server",
                         action = "store_true")
+    parser.add_argument("--build", help="build result.js",
+                        action = "store_true")
     parser.add_argument("--view", help="view SQLite contents",
                         action="store_true")
     args = parser.parse_args()
@@ -361,20 +372,21 @@ def main():
         benchmark()
     elif args.view:
         view()
+    elif args.build:
+        buildresult()
     else:
         parser.print_help()
 
 
 def prepare():
     """Prepare database before benchmark test"""
-    sqlite_prepare()
     mysql_prepare()
     sysbench_oltp_prepare()
 
 
 def benchmark():
     # Run tests against mysql
-    for threads in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]:
+    for threads in [1024, 768, 512, 256, 128, 64, 32, 16, 8 ,4, 2, 1]:
         try:
             cmd, result = sysbench_oltp_rw(threads)
             d = sysbench2dict(result)
@@ -385,14 +397,27 @@ def benchmark():
                 printv("* Further number of threads will probably also crach.")
                 break
 
+    buildresult()
+
+
+def buildresult():
     results = build_graf_data()
     create_result_file(results)
 
 
 def view():
-    sqlite_prepare()
     view_db_data()
 
+def test_conn():
+    db =dict()
+    c= dict()
+    for x in range(1025):
+        print(x)
+        db[x]=MySQLdb.connect(host=MYSQL_HOST, user=MYSQL_USER, passwd=MYSQL_PASSWORD)
+        c[x]=db[x].cursor()
+        c[x].execute("""select True""")
+
+    sys.exit()
 
 if __name__ == "__main__":
   sys.exit(main())

@@ -13,3 +13,9 @@
     # Loop sysbench
     # Analyze the data. What does it mean? What I really need?
     * Test against different settnings?
+        * mariadb my1.cnf 1 cpu,  20GB ram, virtualized in KVM
+        * mariadb my1.cnf 8 cpu,  40GB ram, virtualized in KVM
+        * mariadb my1.cnf 40 cpu, 132GB ram, baremetal
+
+    * sysbench can aparently write json itself
+      https://archive.fosdem.org/2017/schedule/event/sysbench/attachments/slides/1519/export/events/attachments/sysbench/slides/1519/sysbench.pdf

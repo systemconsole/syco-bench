@@ -1,0 +1,16 @@
+[mysqld]
+
+# The number of outstanding connection requests MySQL can have. This comes
+# into play when the main MySQL thread gets very many connection requests in
+# a very short time.
+back_log = 1024
+
+# The maximum permitted number of simultaneous client connections.
+max_connections  = 1024
+
+# If the value is greater than 1, aborted connections are written to the error log
+log-warnings=3
+
+# Log all queries that have taken more than long_query_time seconds to execute to this file.
+slow_query_log
+slow_query_log_file=slow.log
