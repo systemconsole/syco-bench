@@ -5,6 +5,7 @@
 
 docker pull mariadb
 docker run --name syco-mariadb -v `pwd`/syco-mariadb/default.d:/etc/mysql/conf.d -e MYSQL_ROOT_PASSWORD=my-secret-pw -d mariadb:latest
+docker run --name syco-mariadb -e MYSQL_ROOT_PASSWORD=my-secret-pw -d mariadb:latest
 
 
 # Connect to the mariadb

@@ -1,4 +1,4 @@
-* Test oltp on docker mariadb
+# Test oltp on docker mariadb
   A webservice that connects to a mysql database and performs an oltp benchmark
     # Python docker instance
     # Connect instance to maria db instance
@@ -12,10 +12,8 @@
         http://tsunanet.net/~tsuna/benchmarks/7K3000-RE4-ConstellationES/sysbench.html
     # Loop sysbench
     # Analyze the data. What does it mean? What I really need?
-    * Test against different settnings?
-        * mariadb my1.cnf 1 cpu,  20GB ram, virtualized in KVM
-        * mariadb my1.cnf 8 cpu,  40GB ram, virtualized in KVM
-        * mariadb my1.cnf 40 cpu, 132GB ram, baremetal
+    # Go through syco.cnf and copy to my2.cnf and run all tests.
+    # Setup syco-benchmark server on vh06.
+    # Run all tests against my1 and my2.
+    # Test sysbench with --oltp-reconnect=off
 
-    * sysbench can aparently write json itself
-      https://archive.fosdem.org/2017/schedule/event/sysbench/attachments/slides/1519/export/events/attachments/sysbench/slides/1519/sysbench.pdf

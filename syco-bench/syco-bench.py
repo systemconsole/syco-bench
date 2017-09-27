@@ -28,7 +28,8 @@ SQLLITE_DB_FILE = "syco-bench.db"
 
 
 # Mysql settings
-MYSQL_HOST="10.101.11.91"
+#MYSQL_HOST="10.101.11.91"
+MYSQL_HOST="10.101.1.206"
 MYSQL_USER="sbtest"
 MYSQL_PASSWORD="my-secret-pw"
 MYSQL_DB="sbtest"
@@ -93,6 +94,7 @@ def sysbench(cmd, threads):
         TEST_DIR=TEST_DIR,
         THREADS=threads
     )
+
     result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
     if result.returncode:
         printv("error")
@@ -342,40 +344,21 @@ def create_result_file(results):
         f.write(";")
 
 
-def view_db_data():
+def view_db_data(config):
     """Print output from database."""
     conn, c = sqlite_connect()
-
-    for row in c.execute("SELECT * FROM sysbench_oltp"):
+    config = "%" + config + "%"
+    for row in c.execute("""
+        SELECT 
+            * 
+        FROM 
+            sysbench_oltp
+        WHERE
+            config like ?
+        """, (config,)):
         print("Threads: %s" % row['threads'])
         print(row['result'])
         print("-"*80)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='Benchmark mysql database with sysbench and '
-                    'displays result in syco-bench.html.'
-    )
-    parser.add_argument("--prepare", help="prepare the server benchmark",
-                        action = "store_true")
-    parser.add_argument("--bench", help="benchmark the server",
-                        action = "store_true")
-    parser.add_argument("--build", help="build result.js",
-                        action = "store_true")
-    parser.add_argument("--view", help="view SQLite contents",
-                        action="store_true")
-    args = parser.parse_args()
-    if args.prepare:
-        prepare()
-    elif args.bench:
-        benchmark()
-    elif args.view:
-        view()
-    elif args.build:
-        buildresult()
-    else:
-        parser.print_help()
 
 
 def prepare():
@@ -384,13 +367,27 @@ def prepare():
     sysbench_oltp_prepare()
 
 
-def benchmark():
+def resetsqllite(config, test_mode):
+    """Remove all data for one test"""
+    printv("* Remove all data for one test (%s, %s)." % (config, test_mode))
+    conn, c = sqlite_connect()
+    c.execute("""
+    DELETE FROM 
+      sysbench_oltp
+    WHERE
+      config=? AND
+      test_mode=?
+    """, (config, test_mode))
+    conn.commit()
+
+
+def benchmark(config, test_mode):
     # Run tests against mysql
     for threads in [1024, 768, 512, 256, 128, 64, 32, 16, 8 ,4, 2, 1]:
         try:
             cmd, result = sysbench_oltp_rw(threads)
             d = sysbench2dict(result)
-            sqlite_store_sysbench_oltp(cmd, d, "mariadb", "rndrw", threads)
+            sqlite_store_sysbench_oltp(cmd, d, config, test_mode, threads)
         except MySQLdb.OperationalError as e:
             if e.args[0] == 1040:
                 printv(e.args[1])
@@ -405,8 +402,8 @@ def buildresult():
     create_result_file(results)
 
 
-def view():
-    view_db_data()
+def view(config):
+    view_db_data(config)
 
 def test_conn():
     db =dict()
@@ -418,6 +415,39 @@ def test_conn():
         c[x].execute("""select True""")
 
     sys.exit()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Benchmark mysql database with sysbench and '
+                    'displays result in syco-bench.html.'
+    )
+    parser.add_argument("config",   default="mariadb", help="Name of database setup.")
+    parser.add_argument("--prepare", help="prepare the server benchmark",
+                        action = "store_true")
+    parser.add_argument("--reset", help="reset SQLLite db",
+                        action = "store_true")
+    parser.add_argument("--bench", help="benchmark the server",
+                        action = "store_true")
+    parser.add_argument("--build", help="build result.js",
+                        action = "store_true")
+    parser.add_argument("--view", help="view SQLite contents",
+                        action="store_true")
+    args = parser.parse_args()
+
+    if args.prepare:
+        prepare()
+    elif args.reset:
+        resetsqllite(args.config, "rndrw")
+    elif args.bench:
+        benchmark(args.config, "rndrw")
+    elif args.view:
+        view(args.config)
+    elif args.build:
+        buildresult()
+    else:
+        parser.print_help()
+
 
 if __name__ == "__main__":
   sys.exit(main())

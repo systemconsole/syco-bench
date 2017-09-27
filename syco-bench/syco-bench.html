@@ -72,10 +72,14 @@ function init() {
   choices = $("#choices");
   choices.find(".all").change(selectall);
   choices.find("input").change(redraw);
-  choices.find(".all[for=configs_list]").click();
+  #choices.find(".all[for=configs_list]").click();
   choices.find(".all[for=test_modes_list]").click();
+  $("#idDryru_cpu1n").click();
   $("#idtotal_num_events").click();
   $("#idreq_95p").click();
+  $("#idtransactions").click();
+  $("#idnread").click();
+  $("#idnwrite").click();
 }
 
 function selectall(event) {
